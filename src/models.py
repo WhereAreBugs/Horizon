@@ -326,6 +326,56 @@ class TelegramBotConfig(BaseModel):
         return v
 
 
+class DaemonConfig(BaseModel):
+    """Long-running container scheduler configuration."""
+
+    enabled: bool = False
+    run_on_startup: bool = True
+    startup_delay_sec: int = 0
+    mode: str = "daily"  # daily, interval
+    time: str = "08:00"
+    timezone: str = "UTC"
+    interval_hours: float = 24.0
+    force_hours: Optional[int] = 24
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        allowed = {"daily", "interval"}
+        if v not in allowed:
+            raise ValueError(f"daemon.mode must be one of {allowed}, got '{v}'")
+        return v
+
+    @field_validator("time")
+    @classmethod
+    def validate_time(cls, v: str) -> str:
+        parts = v.split(":")
+        if len(parts) != 2:
+            raise ValueError("daemon.time must be in HH:MM format")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError as exc:
+            raise ValueError("daemon.time must be in HH:MM format") from exc
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("daemon.time must be in HH:MM format")
+        return v
+
+    @field_validator("startup_delay_sec")
+    @classmethod
+    def validate_non_negative_int(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("daemon.startup_delay_sec must be non-negative")
+        return v
+
+    @field_validator("interval_hours")
+    @classmethod
+    def validate_interval_hours(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("daemon.interval_hours must be positive")
+        return v
+
+
 class EmailConfig(BaseModel):
     """Email configuration for updates/subscriptions."""
 
@@ -360,3 +410,4 @@ class Config(BaseModel):
     email: Optional[EmailConfig] = None
     webhook: Optional[WebhookConfig] = None
     telegram_bot: Optional[TelegramBotConfig] = None
+    daemon: Optional[DaemonConfig] = None

@@ -618,6 +618,72 @@ to `http://127.0.0.1:8088/telegram/webhook`.
 The service validates Telegram's `X-Telegram-Bot-Api-Secret-Token` header when
 `TELEGRAM_WEBHOOK_SECRET` is set. Keep this enabled behind reverse proxies.
 
+## Long-Running Container Daemon
+
+For container deployments, use `horizon-daemon` instead of the one-shot
+`horizon` command. The daemon keeps one process alive, hosts the Telegram
+callback service, and runs Horizon on a configurable schedule.
+
+```json
+{
+  "daemon": {
+    "enabled": true,
+    "run_on_startup": true,
+    "startup_delay_sec": 0,
+    "mode": "daily",
+    "time": "08:00",
+    "timezone": "UTC",
+    "interval_hours": 24,
+    "force_hours": 24
+  }
+}
+```
+
+- `enabled`: Turns scheduled Horizon runs on or off. The HTTP callback service
+  still stays online even when the scheduler is disabled.
+- `run_on_startup`: When `true`, run Horizon once after the container starts.
+  This is useful for deployment testing and restart recovery.
+- `startup_delay_sec`: Optional delay before the startup run.
+- `mode`: `daily` runs at a wall-clock time; `interval` runs every
+  `interval_hours` after the previous wait finishes.
+- `time`: Daily schedule time in `HH:MM`.
+- `timezone`: IANA timezone, for example `UTC`, `Asia/Shanghai`, or
+  `America/New_York`.
+- `interval_hours`: Interval mode cadence.
+- `force_hours`: Passed to Horizon as the fetch window, equivalent to
+  `horizon --hours 24`. Set to `null` to use `filtering.time_window_hours`.
+
+Start the daemon locally:
+
+```bash
+uv run horizon-daemon
+```
+
+With Docker Compose, the included service defaults to the daemon and publishes
+the callback service on localhost only:
+
+```yaml
+ports:
+  - "127.0.0.1:8088:8088"
+```
+
+Put your reverse proxy in front of that local port. For example:
+
+```nginx
+location /telegram/webhook {
+    proxy_pass http://127.0.0.1:8088/telegram/webhook;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+One-shot runs remain available:
+
+```bash
+docker compose run --rm horizon horizon --hours 24
+```
+
 ### DingTalk
 
 In DingTalk, create a custom group robot and use a custom keyword such as `Horizon`. The keyword must appear in the body content.

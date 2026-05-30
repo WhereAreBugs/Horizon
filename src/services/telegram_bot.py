@@ -328,6 +328,7 @@ def create_app(
     *,
     data_dir: str | Path = "data",
     client: TelegramBotClient | None = None,
+    lifespan: Any = None,
 ):
     """Create the ASGI app used by the Telegram callback service."""
     from starlette.applications import Starlette
@@ -429,7 +430,8 @@ def create_app(
         routes=[
             Route("/healthz", health, methods=["GET"]),
             Route(config.webhook_path, webhook, methods=["POST"]),
-        ]
+        ],
+        lifespan=lifespan,
     )
 
 

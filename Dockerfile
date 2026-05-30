@@ -13,8 +13,9 @@ COPY src ./src
 COPY data ./data
 COPY .env.example .env.example
 
-# Install dependencies
-RUN uv sync --frozen --no-dev
+# Install dependencies. Include OpenBB so configured investment watchlists work
+# in the container instead of being skipped as an optional source.
+RUN uv sync --frozen --extra openbb --no-dev
 
 # Create volume mount points
 VOLUME ["/app/data"]
@@ -22,6 +23,7 @@ VOLUME ["/app/data"]
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Run the application
-ENTRYPOINT ["uv", "run", "horizon"]
-CMD []
+# Run commands through uv. The default command is the long-running daemon;
+# one-shot runs can still use: docker compose run --rm horizon horizon --hours 24
+ENTRYPOINT ["uv", "run"]
+CMD ["horizon-daemon"]

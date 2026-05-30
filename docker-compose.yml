@@ -7,7 +7,9 @@ services:
       - ./.env:/app/.env:ro
     environment:
       - TZ=UTC
+    ports:
+      - "127.0.0.1:8088:8088"
     restart: unless-stopped
-    # Run daily at 8:00 AM UTC (adjust as needed)
-    # For one-time run, use: docker compose run --rm horizon
-    command: ["--hours", "24"]
+    # Long-running daemon: Telegram callback HTTP service + configurable scheduler.
+    # For one-time run, use: docker compose run --rm horizon horizon --hours 24
+    command: ["horizon-daemon"]

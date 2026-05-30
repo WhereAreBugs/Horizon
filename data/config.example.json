@@ -162,7 +162,7 @@
     "public_base_url_env": "TELEGRAM_PUBLIC_BASE_URL",
     "webhook_path": "/telegram/webhook",
     "secret_token_env": "TELEGRAM_WEBHOOK_SECRET",
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     "port": 8088,
     "languages": ["zh"],
     "max_items": 10,
@@ -171,5 +171,15 @@
     "disable_web_page_preview": true,
     "proxy_headers": true,
     "forwarded_allow_ips": "*"
+  },
+  "daemon": {
+    "enabled": false,
+    "run_on_startup": true,
+    "startup_delay_sec": 0,
+    "mode": "daily",
+    "time": "08:00",
+    "timezone": "UTC",
+    "interval_hours": 24,
+    "force_hours": 24
   }
 }
