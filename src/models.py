@@ -292,6 +292,40 @@ class WebhookConfig(BaseModel):
         return v
 
 
+class TelegramBotConfig(BaseModel):
+    """Interactive Telegram bot delivery and callback service configuration."""
+
+    enabled: bool = False
+    bot_token_env: str = "TELEGRAM_BOT_TOKEN"
+    chat_id_env: str = "TELEGRAM_CHAT_ID"
+    public_base_url_env: str = "TELEGRAM_PUBLIC_BASE_URL"
+    webhook_path: str = "/telegram/webhook"
+    secret_token_env: str = "TELEGRAM_WEBHOOK_SECRET"
+    host: str = "127.0.0.1"
+    port: int = 8088
+    languages: Optional[List[str]] = Field(default_factory=lambda: ["zh"])
+    max_items: int = 10
+    overview_limit: int = 3600
+    item_limit: int = 3800
+    disable_web_page_preview: bool = True
+    proxy_headers: bool = True
+    forwarded_allow_ips: str = "*"
+
+    @field_validator("webhook_path")
+    @classmethod
+    def validate_webhook_path(cls, v: str) -> str:
+        if not v.startswith("/"):
+            raise ValueError("telegram_bot.webhook_path must start with '/'")
+        return v
+
+    @field_validator("max_items", "overview_limit", "item_limit")
+    @classmethod
+    def validate_positive_int(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("telegram_bot numeric limits must be positive")
+        return v
+
+
 class EmailConfig(BaseModel):
     """Email configuration for updates/subscriptions."""
 
@@ -325,3 +359,4 @@ class Config(BaseModel):
     filtering: FilteringConfig
     email: Optional[EmailConfig] = None
     webhook: Optional[WebhookConfig] = None
+    telegram_bot: Optional[TelegramBotConfig] = None

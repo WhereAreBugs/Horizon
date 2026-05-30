@@ -12,6 +12,7 @@ from .models import Config, ContentItem
 from .storage.manager import StorageManager
 from .services.email import EmailManager
 from .services.webhook import WebhookNotifier
+from .services.telegram_bot import TelegramBotNotifier
 from .scrapers.github import GitHubScraper
 from .scrapers.hackernews import HackerNewsScraper
 from .scrapers.rss import RSSScraper
@@ -44,6 +45,15 @@ class HorizonOrchestrator:
         self.webhook_notifier = (
             WebhookNotifier(config.webhook, console=self.console)
             if config.webhook and config.webhook.enabled
+            else None
+        )
+        self.telegram_bot_notifier = (
+            TelegramBotNotifier(
+                config.telegram_bot,
+                data_dir=storage.data_dir,
+                console=self.console,
+            )
+            if config.telegram_bot and config.telegram_bot.enabled
             else None
         )
 
@@ -182,6 +192,15 @@ class HorizonOrchestrator:
                 if self.webhook_notifier:
                     await self.webhook_notifier.send_daily_summary(
                         summary=summary,
+                        important_items=important_items,
+                        all_items_count=len(all_items),
+                        date=today,
+                        lang=lang,
+                        summarizer=summarizer,
+                    )
+
+                if self.telegram_bot_notifier:
+                    await self.telegram_bot_notifier.send_daily_summary(
                         important_items=important_items,
                         all_items_count=len(all_items),
                         date=today,

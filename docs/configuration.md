@@ -558,6 +558,66 @@ Use `#{key?limit=N&split=DELIM}` to truncate long values by splitting on `DELIM`
 #{summary?limit=3000&split=---}
 ```
 
+## Telegram Bot Interactive Delivery
+
+Telegram does not have Feishu/Lark-style cards, but Horizon can run a small
+Telegram bot callback service. The daily run sends one compact overview message
+with inline buttons. Tapping an item button edits the same Telegram message to
+show that item's details; tapping "Back to overview" restores the overview. This
+keeps the chat readable without sending one message per item.
+
+```json
+{
+  "telegram_bot": {
+    "enabled": true,
+    "bot_token_env": "TELEGRAM_BOT_TOKEN",
+    "chat_id_env": "TELEGRAM_CHAT_ID",
+    "public_base_url_env": "TELEGRAM_PUBLIC_BASE_URL",
+    "webhook_path": "/telegram/webhook",
+    "secret_token_env": "TELEGRAM_WEBHOOK_SECRET",
+    "host": "127.0.0.1",
+    "port": 8088,
+    "languages": ["zh"],
+    "max_items": 10,
+    "overview_limit": 3600,
+    "item_limit": 3800,
+    "disable_web_page_preview": true,
+    "proxy_headers": true,
+    "forwarded_allow_ips": "*"
+  }
+}
+```
+
+Required environment variables:
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:bot-token
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_PUBLIC_BASE_URL=https://example.com
+TELEGRAM_WEBHOOK_SECRET=choose-a-random-secret
+```
+
+Run the local callback service:
+
+```bash
+uv run horizon-telegram-bot serve
+```
+
+Register the Telegram webhook:
+
+```bash
+uv run horizon-telegram-bot set-webhook
+```
+
+For reverse proxy deployments, route the public
+`${TELEGRAM_PUBLIC_BASE_URL}${telegram_bot.webhook_path}` URL to the local
+service. For example, if `TELEGRAM_PUBLIC_BASE_URL=https://example.com` and
+`webhook_path=/telegram/webhook`, proxy `https://example.com/telegram/webhook`
+to `http://127.0.0.1:8088/telegram/webhook`.
+
+The service validates Telegram's `X-Telegram-Bot-Api-Secret-Token` header when
+`TELEGRAM_WEBHOOK_SECRET` is set. Keep this enabled behind reverse proxies.
+
 ### DingTalk
 
 In DingTalk, create a custom group robot and use a custom keyword such as `Horizon`. The keyword must appear in the body content.

@@ -20,6 +20,8 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "markdown>=3.10.2",
     "mcp>=1.0.0",
+    "starlette>=0.37.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +39,7 @@ horizon = "src.main:main"
 horizon-mcp = "src.mcp.server:main"
 horizon-wizard = "src.setup.wizard:main"
 horizon-webhook = "src.services.webhook_cli:main"
+horizon-telegram-bot = "src.services.telegram_bot:main"
 
 [build-system]
 requires = ["hatchling"]
