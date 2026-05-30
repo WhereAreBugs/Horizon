@@ -166,6 +166,7 @@
     "port": 8088,
     "languages": ["zh"],
     "max_items": 10,
+    "page_size": 5,
     "overview_limit": 3600,
     "item_limit": 3800,
     "disable_web_page_preview": true,

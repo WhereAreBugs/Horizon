@@ -26,4 +26,4 @@ ENV PYTHONUNBUFFERED=1
 # Run commands through uv. The default command is the long-running daemon;
 # one-shot runs can still use: docker compose run --rm horizon horizon --hours 24
 ENTRYPOINT ["uv", "run"]
-CMD ["horizon-daemon"]
+CMD ["python", "-m", "src.services.daemon"]

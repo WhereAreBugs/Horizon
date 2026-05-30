@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,7 +26,10 @@ from ..storage.manager import ConfigError, StorageManager
 logger = logging.getLogger(__name__)
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_CALLBACK_RE = re.compile(r"^hzn:(?P<action>[io]):(?P<run>[A-Za-z0-9_-]+)(?::(?P<idx>\d+))?$")
+_CALLBACK_RE = re.compile(
+    r"^hzn:(?P<action>[io]):(?P<run>[A-Za-z0-9_-]+)"
+    r"(?::(?P<idx>\d+))?(?::(?P<page>\d+))?$"
+)
 
 
 class TelegramBotError(RuntimeError):
@@ -120,6 +124,29 @@ def _button_text(index: int, title: str, score: Any, limit: int = 46) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _page_count(items: list[Any], page_size: int) -> int:
+    page_size = max(1, page_size)
+    return max(1, (len(items) + page_size - 1) // page_size)
+
+
+def _clamp_page(page: int, items: list[Any], page_size: int) -> int:
+    return min(max(page, 0), _page_count(items, page_size) - 1)
+
+
+def _page_bounds(page: int, items: list[Any], page_size: int) -> tuple[int, int]:
+    page = _clamp_page(page, items, page_size)
+    page_size = max(1, page_size)
+    start = page * page_size
+    return start, min(start + page_size, len(items))
+
+
 def _plain_markdown(markdown: str) -> str:
     """Convert Horizon Markdown into Telegram-safe plain text.
 
@@ -162,22 +189,19 @@ def build_telegram_run_payload(
         intro = (
             f"从 {all_items_count} 条内容中筛选出 {len(important_items)} 条重要资讯。"
         )
-        hint = "点击下方按钮查看详情；详情会原地展开，不会刷屏。"
+        hint = "点击下方标题查看详情；使用翻页按钮浏览更多。详情页可打开原文。"
         if len(important_items) > len(selected):
-            hint += f"\n当前展示前 {len(selected)} 条。"
+            hint += f"\n本次收录前 {len(selected)} 条。"
     else:
         intro = (
             f"Selected {len(important_items)} important items from "
             f"{all_items_count} fetched items."
         )
-        hint = "Use the buttons below to expand details in place."
+        hint = "Tap a title below for details. Use pagination to browse more."
         if len(important_items) > len(selected):
-            hint += f"\nShowing the top {len(selected)} items."
+            hint += f"\nIncluding the top {len(selected)} items."
 
-    lines = [header, "", intro, "", hint, ""]
-    for i, item in enumerate(selected, start=1):
-        score = item.ai_score or "?"
-        lines.append(f"{i}. {_item_title(item, lang)} ({score}/10)")
+    lines = [header, "", intro, "", hint]
 
     overview = _truncate("\n".join(lines).strip(), config.overview_limit)
 
@@ -205,24 +229,91 @@ def build_telegram_run_payload(
         "language": lang,
         "all_items_count": all_items_count,
         "important_items_count": len(important_items),
+        "page_size": config.page_size,
+        "overview_limit": config.overview_limit,
         "overview": overview,
         "items": details,
     }
 
 
-def build_overview_keyboard(run_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+def build_overview_text(
+    payload: dict[str, Any],
+    *,
+    page: int = 0,
+    page_size: int | None = None,
+    limit: int | None = None,
+) -> str:
+    """Build overview text with current page status."""
+    items = payload.get("items") or []
+    overview = str(payload.get("overview") or "")
+    if not items:
+        return overview
+
+    page_size = max(1, _safe_int(page_size or payload.get("page_size"), 5))
+    page = _clamp_page(page, items, page_size)
+    start, end = _page_bounds(page, items, page_size)
+    page_total = _page_count(items, page_size)
+    lang = str(payload.get("language") or "zh")
+    if lang == "zh":
+        status = f"第 {page + 1}/{page_total} 页 · 当前 {start + 1}-{end}/{len(items)}"
+    else:
+        status = f"Page {page + 1}/{page_total} · Showing {start + 1}-{end}/{len(items)}"
+    return _truncate(
+        f"{overview}\n\n{status}",
+        max(1, _safe_int(limit or payload.get("overview_limit"), 3600)),
+    )
+
+
+def build_overview_keyboard(
+    run_id: str,
+    items: list[dict[str, Any]],
+    *,
+    page: int = 0,
+    page_size: int = 5,
+    lang: str = "zh",
+) -> dict[str, Any]:
     rows = []
-    for item in items:
+    page_size = max(1, page_size)
+    page = _clamp_page(page, items, page_size)
+    start, end = _page_bounds(page, items, page_size)
+
+    for item in items[start:end]:
         index = int(item["index"])
         rows.append(
             [
                 {
                     "text": _button_text(index, str(item["title"]), item.get("score") or "?"),
-                    "callback_data": f"hzn:i:{run_id}:{index}",
+                    "callback_data": f"hzn:i:{run_id}:{index}:{page}",
                 }
             ]
         )
+
+    page_total = _page_count(items, page_size)
+    if page_total > 1:
+        page_text = f"第 {page + 1}/{page_total} 页" if lang == "zh" else f"Page {page + 1}/{page_total}"
+        prev_text = "上一页" if lang == "zh" else "Prev"
+        next_text = "下一页" if lang == "zh" else "Next"
+        nav = []
+        if page > 0:
+            nav.append({"text": prev_text, "callback_data": f"hzn:o:{run_id}:{page - 1}"})
+        nav.append({"text": page_text, "callback_data": f"hzn:o:{run_id}:{page}"})
+        if page < page_total - 1:
+            nav.append({"text": next_text, "callback_data": f"hzn:o:{run_id}:{page + 1}"})
+        rows.append(nav)
+
     return {"inline_keyboard": rows}
+
+
+def build_detail_text(item: dict[str, Any]) -> str:
+    """Build HTML detail text with a clickable source title."""
+    title = str(item.get("title") or "Untitled")
+    url = str(item.get("url") or "")
+    body = escape(str(item.get("text") or ""))
+    if url.startswith(("http://", "https://")):
+        heading = f'<a href="{escape(url, quote=True)}">{escape(title)}</a>'
+    else:
+        heading = escape(title)
+    return f"{heading}\n\n{body}".strip()
 
 
 def build_detail_keyboard(
@@ -230,13 +321,15 @@ def build_detail_keyboard(
     run_id: str,
     item: dict[str, Any],
     lang: str,
+    page: int = 0,
 ) -> dict[str, Any]:
-    back_text = "返回总览" if lang == "zh" else "Back to overview"
+    back_text = "返回列表" if lang == "zh" else "Back to list"
     open_text = "打开原文" if lang == "zh" else "Open source"
-    rows = [[{"text": back_text, "callback_data": f"hzn:o:{run_id}"}]]
+    rows = []
     url = str(item.get("url") or "")
     if url.startswith(("http://", "https://")):
         rows.append([{"text": open_text, "url": url}])
+    rows.append([{"text": back_text, "callback_data": f"hzn:o:{run_id}:{page}"}])
     return {"inline_keyboard": rows}
 
 
@@ -298,18 +391,23 @@ class TelegramBotNotifier:
             summarizer=summarizer,
         )
         run_id = self.store.save(payload)
-        keyboard = build_overview_keyboard(run_id, payload["items"])
+        keyboard = build_overview_keyboard(
+            run_id,
+            payload["items"],
+            page=0,
+            page_size=self.config.page_size,
+            lang=lang,
+        )
 
         self.console.print(f"🤖 Sending {lang.upper()} Telegram bot overview...")
-        await self.client.call(
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": payload["overview"],
-                "disable_web_page_preview": self.config.disable_web_page_preview,
-                "reply_markup": keyboard,
-            },
-        )
+        message = {
+            "chat_id": chat_id,
+            "text": build_overview_text(payload, page=0, page_size=self.config.page_size),
+            "disable_web_page_preview": self.config.disable_web_page_preview,
+        }
+        if keyboard["inline_keyboard"]:
+            message["reply_markup"] = keyboard
+        await self.client.call("sendMessage", message)
 
 
 def _is_allowed_chat(config: TelegramBotConfig, chat_id: Any) -> bool:
@@ -392,11 +490,22 @@ def create_app(
 
         lang = str(payload.get("language") or "zh")
         action = match.group("action")
+        page_size = max(1, _safe_int(payload.get("page_size") or config.page_size, 5))
         if action == "o":
-            text = str(payload.get("overview") or "")
-            reply_markup = build_overview_keyboard(run_id, payload.get("items") or [])
+            items = payload.get("items") or []
+            page = _clamp_page(_safe_int(match.group("idx"), 0), items, page_size)
+            text = build_overview_text(payload, page=page, page_size=page_size)
+            reply_markup = build_overview_keyboard(
+                run_id,
+                items,
+                page=page,
+                page_size=page_size,
+                lang=lang,
+            )
+            parse_mode = None
         else:
             idx = int(match.group("idx") or 0)
+            page = _safe_int(match.group("page"), 0)
             items = payload.get("items") or []
             item = next((i for i in items if int(i.get("index", 0)) == idx), None)
             if item is None:
@@ -406,19 +515,26 @@ def create_app(
                         {"callback_query_id": callback_id, "text": "Item not found"},
                     )
                 return await _json_response({"ok": True})
-            text = str(item.get("text") or "")
-            reply_markup = build_detail_keyboard(run_id=run_id, item=item, lang=lang)
+            page = _clamp_page(page, items, page_size)
+            text = build_detail_text(item)
+            reply_markup = build_detail_keyboard(
+                run_id=run_id,
+                item=item,
+                lang=lang,
+                page=page,
+            )
+            parse_mode = "HTML"
 
-        await bot_client.call(
-            "editMessageText",
-            {
-                "chat_id": chat.get("id"),
-                "message_id": message_id,
-                "text": text,
-                "disable_web_page_preview": config.disable_web_page_preview,
-                "reply_markup": reply_markup,
-            },
-        )
+        edit_payload = {
+            "chat_id": chat.get("id"),
+            "message_id": message_id,
+            "text": text,
+            "disable_web_page_preview": config.disable_web_page_preview,
+            "reply_markup": reply_markup,
+        }
+        if parse_mode:
+            edit_payload["parse_mode"] = parse_mode
+        await bot_client.call("editMessageText", edit_payload)
         if callback_id:
             await bot_client.call(
                 "answerCallbackQuery",

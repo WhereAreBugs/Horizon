@@ -41,6 +41,17 @@ class RedditBlockedError(Exception):
     """Raised when Reddit blocks an unauthenticated JSON listing request."""
 
 
+def _error_detail(exc: Exception) -> str:
+    detail = repr(exc)
+    request = getattr(exc, "request", None)
+    if request is not None:
+        detail = f"{detail} request={request.method} {request.url}"
+    response = getattr(exc, "response", None)
+    if response is not None:
+        detail = f"{detail} status={response.status_code}"
+    return detail
+
+
 class RedditScraper(BaseScraper):
     """Scraper for Reddit posts and comments."""
 
@@ -84,7 +95,7 @@ class RedditScraper(BaseScraper):
         try:
             data = await self._reddit_get(url, params)
         except RedditBlockedError:
-            logger.warning(
+            logger.info(
                 "Reddit blocked JSON listing for r/%s; falling back to RSS",
                 cfg.subreddit,
             )
@@ -117,7 +128,12 @@ class RedditScraper(BaseScraper):
             )
             response.raise_for_status()
         except httpx.HTTPError as e:
-            logger.warning("Reddit RSS fallback failed for r/%s: %s", cfg.subreddit, e)
+            logger.warning(
+                "Reddit RSS fallback failed for r/%s (%s): %s",
+                cfg.subreddit,
+                rss_url,
+                _error_detail(e),
+            )
             return []
 
         feed = feedparser.parse(response.text)
@@ -355,5 +371,5 @@ class RedditScraper(BaseScraper):
         except RedditBlockedError:
             raise
         except httpx.HTTPError as e:
-            logger.warning("Reddit request failed for %s: %s", url, e)
+            logger.warning("Reddit request failed for %s: %s", url, _error_detail(e))
             return None

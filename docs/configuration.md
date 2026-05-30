@@ -579,6 +579,7 @@ keeps the chat readable without sending one message per item.
     "port": 8088,
     "languages": ["zh"],
     "max_items": 10,
+    "page_size": 5,
     "overview_limit": 3600,
     "item_limit": 3800,
     "disable_web_page_preview": true,
@@ -587,6 +588,9 @@ keeps the chat readable without sending one message per item.
   }
 }
 ```
+
+`max_items` controls how many important items are included in one Telegram run.
+`page_size` controls how many title buttons are shown per page.
 
 Required environment variables:
 
