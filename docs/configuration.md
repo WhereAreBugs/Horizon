@@ -561,10 +561,10 @@ Use `#{key?limit=N&split=DELIM}` to truncate long values by splitting on `DELIM`
 ## Telegram Bot Interactive Delivery
 
 Telegram does not have Feishu/Lark-style cards, but Horizon can run a small
-Telegram bot callback service. The daily run sends one compact overview message
-with inline buttons. Tapping an item button edits the same Telegram message to
-show that item's details; tapping "Back to overview" restores the overview. This
-keeps the chat readable without sending one message per item.
+Telegram bot callback service. The daily run sends one paginated overview message:
+each page lists item summaries in the message body, item titles are source links,
+and inline buttons are only used for previous/next page navigation. This keeps
+the chat readable without sending one message per item.
 
 ```json
 {
@@ -578,7 +578,6 @@ keeps the chat readable without sending one message per item.
     "host": "127.0.0.1",
     "port": 8088,
     "languages": ["zh"],
-    "max_items": 10,
     "page_size": 5,
     "overview_limit": 3600,
     "item_limit": 3800,
@@ -589,8 +588,8 @@ keeps the chat readable without sending one message per item.
 }
 ```
 
-`max_items` controls how many important items are included in one Telegram run.
-`page_size` controls how many title buttons are shown per page.
+All important items selected by the run are included. `page_size` controls how
+many items are shown per Telegram page.
 
 Required environment variables:
 

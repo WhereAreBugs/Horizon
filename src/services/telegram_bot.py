@@ -117,13 +117,6 @@ def _truncate(text: str, limit: int) -> str:
     return text[: max(0, limit - len(marker))].rstrip() + marker
 
 
-def _button_text(index: int, title: str, score: Any, limit: int = 46) -> str:
-    text = f"{index}. {title} ({score}/10)"
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1].rstrip() + "…"
-
-
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -169,6 +162,38 @@ def _item_title(item: ContentItem, language: str) -> str:
     return str(item.metadata.get(f"title_{language}") or item.title)
 
 
+def _item_excerpt(item: ContentItem, language: str) -> str:
+    meta = item.metadata
+    parts = [
+        meta.get(f"detailed_summary_{language}")
+        or meta.get("detailed_summary")
+        or item.ai_summary
+        or item.content
+        or ""
+    ]
+
+    background = meta.get(f"background_{language}") or meta.get("background") or ""
+    if background:
+        label = "背景" if language == "zh" else "Background"
+        parts.append(f"{label}: {background}")
+
+    discussion = (
+        meta.get(f"community_discussion_{language}")
+        or meta.get("community_discussion")
+        or ""
+    )
+    if discussion:
+        label = "讨论" if language == "zh" else "Discussion"
+        parts.append(f"{label}: {discussion}")
+
+    if item.ai_tags:
+        label = "标签" if language == "zh" else "Tags"
+        parts.append(f"{label}: " + ", ".join(f"#{tag}" for tag in item.ai_tags))
+
+    text = "\n\n".join(str(part).strip() for part in parts if str(part).strip())
+    return _plain_markdown(text)
+
+
 def build_telegram_run_payload(
     *,
     config: TelegramBotConfig,
@@ -179,7 +204,7 @@ def build_telegram_run_payload(
     summarizer: DailySummarizer,
 ) -> dict[str, Any]:
     """Build persisted overview/detail payload for Telegram callbacks."""
-    selected = important_items[: config.max_items]
+    selected = important_items
     header = (
         f"Horizon 每日速递 - {date}"
         if lang == "zh"
@@ -189,17 +214,13 @@ def build_telegram_run_payload(
         intro = (
             f"从 {all_items_count} 条内容中筛选出 {len(important_items)} 条重要资讯。"
         )
-        hint = "点击下方标题查看详情；使用翻页按钮浏览更多。详情页可打开原文。"
-        if len(important_items) > len(selected):
-            hint += f"\n本次收录前 {len(selected)} 条。"
+        hint = "下面按页展示全部重要资讯；点击标题可直接打开来源。"
     else:
         intro = (
             f"Selected {len(important_items)} important items from "
             f"{all_items_count} fetched items."
         )
-        hint = "Tap a title below for details. Use pagination to browse more."
-        if len(important_items) > len(selected):
-            hint += f"\nIncluding the top {len(selected)} items."
+        hint = "All selected items are shown across pages. Tap a title to open the source."
 
     lines = [header, "", intro, "", hint]
 
@@ -207,20 +228,20 @@ def build_telegram_run_payload(
 
     details: list[dict[str, Any]] = []
     for i, item in enumerate(selected, start=1):
-        item_text = summarizer.generate_webhook_item(
+        detail_text = summarizer.generate_webhook_item(
             item,
             language=lang,
             index=i,
             total=len(selected),
         )
-        text = _truncate(_plain_markdown(item_text), config.item_limit)
         details.append(
             {
                 "index": i,
                 "title": _item_title(item, lang),
                 "score": item.ai_score or "",
                 "url": str(item.url),
-                "text": text,
+                "text": _truncate(_plain_markdown(detail_text), config.item_limit),
+                "excerpt": _truncate(_item_excerpt(item, lang), config.item_limit),
             }
         )
 
@@ -236,6 +257,48 @@ def build_telegram_run_payload(
     }
 
 
+def _item_link(item: dict[str, Any]) -> str:
+    title = escape(str(item.get("title") or "Untitled"))
+    url = str(item.get("url") or "")
+    if url.startswith(("http://", "https://")):
+        return f'<a href="{escape(url, quote=True)}">{title}</a>'
+    return title
+
+
+def _page_item_block(item: dict[str, Any], excerpt_limit: int) -> str:
+    index = int(item.get("index") or 0)
+    score = item.get("score") or "?"
+    heading = f"{index}. {_item_link(item)} ⭐ {escape(str(score))}/10"
+    excerpt = _truncate(str(item.get("excerpt") or item.get("text") or ""), excerpt_limit)
+    if not excerpt:
+        return heading
+    return f"{heading}\n{escape(excerpt)}"
+
+
+def _build_overview_page_html(
+    *,
+    overview: str,
+    status: str,
+    page_items: list[dict[str, Any]],
+    limit: int,
+) -> str:
+    header = f"{escape(overview)}\n\n{escape(status)}"
+    if not page_items:
+        return _truncate(header, limit)
+
+    per_item_limit = max(120, (limit - len(header) - 2 * len(page_items)) // len(page_items))
+    while per_item_limit >= 80:
+        blocks = [_page_item_block(item, per_item_limit) for item in page_items]
+        text = "\n\n".join([header, *blocks])
+        if len(text) <= limit:
+            return text
+        per_item_limit -= 80
+
+    blocks = [_page_item_block(item, 0).split("\n", 1)[0] for item in page_items]
+    text = "\n\n".join([header, *blocks])
+    return text if len(text) <= limit else "\n\n".join([header, *blocks[:1]])
+
+
 def build_overview_text(
     payload: dict[str, Any],
     *,
@@ -243,11 +306,11 @@ def build_overview_text(
     page_size: int | None = None,
     limit: int | None = None,
 ) -> str:
-    """Build overview text with current page status."""
+    """Build one HTML overview page with item links in the message body."""
     items = payload.get("items") or []
     overview = str(payload.get("overview") or "")
     if not items:
-        return overview
+        return escape(overview)
 
     page_size = max(1, _safe_int(page_size or payload.get("page_size"), 5))
     page = _clamp_page(page, items, page_size)
@@ -258,9 +321,11 @@ def build_overview_text(
         status = f"第 {page + 1}/{page_total} 页 · 当前 {start + 1}-{end}/{len(items)}"
     else:
         status = f"Page {page + 1}/{page_total} · Showing {start + 1}-{end}/{len(items)}"
-    return _truncate(
-        f"{overview}\n\n{status}",
-        max(1, _safe_int(limit or payload.get("overview_limit"), 3600)),
+    return _build_overview_page_html(
+        overview=overview,
+        status=status,
+        page_items=items[start:end],
+        limit=max(1, _safe_int(limit or payload.get("overview_limit"), 3600)),
     )
 
 
@@ -275,18 +340,6 @@ def build_overview_keyboard(
     rows = []
     page_size = max(1, page_size)
     page = _clamp_page(page, items, page_size)
-    start, end = _page_bounds(page, items, page_size)
-
-    for item in items[start:end]:
-        index = int(item["index"])
-        rows.append(
-            [
-                {
-                    "text": _button_text(index, str(item["title"]), item.get("score") or "?"),
-                    "callback_data": f"hzn:i:{run_id}:{index}:{page}",
-                }
-            ]
-        )
 
     page_total = _page_count(items, page_size)
     if page_total > 1:
@@ -403,6 +456,7 @@ class TelegramBotNotifier:
         message = {
             "chat_id": chat_id,
             "text": build_overview_text(payload, page=0, page_size=self.config.page_size),
+            "parse_mode": "HTML",
             "disable_web_page_preview": self.config.disable_web_page_preview,
         }
         if keyboard["inline_keyboard"]:
@@ -502,7 +556,7 @@ def create_app(
                 page_size=page_size,
                 lang=lang,
             )
-            parse_mode = None
+            parse_mode = "HTML"
         else:
             idx = int(match.group("idx") or 0)
             page = _safe_int(match.group("page"), 0)

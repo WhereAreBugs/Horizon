@@ -43,7 +43,7 @@ def _item(idx: int) -> ContentItem:
 
 
 def test_build_telegram_payload_and_keyboard():
-    cfg = TelegramBotConfig(max_items=7, page_size=3)
+    cfg = TelegramBotConfig(page_size=3)
     payload = build_telegram_run_payload(
         config=cfg,
         important_items=[_item(i) for i in range(1, 9)],
@@ -54,11 +54,13 @@ def test_build_telegram_payload_and_keyboard():
     )
 
     assert "Horizon 每日速递" in payload["overview"]
-    assert "本次收录前 7 条" in payload["overview"]
-    assert len(payload["items"]) == 7
+    assert "下面按页展示全部重要资讯" in payload["overview"]
+    assert len(payload["items"]) == 8
 
     text = build_overview_text(payload, page=1, page_size=3)
-    assert "第 2/3 页 · 当前 4-6/7" in text
+    assert "第 2/3 页 · 当前 4-6/8" in text
+    assert '<a href="https://example.com/4">重要资讯 4</a>' in text
+    assert '<a href="https://example.com/1">重要资讯 1</a>' not in text
 
     keyboard = build_overview_keyboard(
         "abc123",
@@ -67,12 +69,15 @@ def test_build_telegram_payload_and_keyboard():
         page_size=3,
         lang="zh",
     )
-    assert keyboard["inline_keyboard"][0][0]["callback_data"] == "hzn:i:abc123:1:0"
-    assert keyboard["inline_keyboard"][2][0]["callback_data"] == "hzn:i:abc123:3:0"
-    assert keyboard["inline_keyboard"][3][1]["callback_data"] == "hzn:o:abc123:1"
+    assert keyboard["inline_keyboard"] == [
+        [
+            {"text": "第 1/3 页", "callback_data": "hzn:o:abc123:0"},
+            {"text": "下一页", "callback_data": "hzn:o:abc123:1"},
+        ]
+    ]
 
 
-def test_callback_edits_message_to_detail_and_back(tmp_path, monkeypatch):
+def test_callback_edits_message_to_paginated_overview(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret")
 
@@ -83,15 +88,16 @@ def test_callback_edits_message_to_detail_and_back(tmp_path, monkeypatch):
             "run_id": "run123",
             "language": "zh",
             "overview": "overview text",
-            "page_size": 5,
+            "page_size": 2,
             "items": [
                 {
-                    "index": 1,
-                    "title": "Item one",
+                    "index": idx,
+                    "title": f"Item {idx}",
                     "score": 8.5,
-                    "url": "https://example.com/1",
-                    "text": "detail text",
+                    "url": f"https://example.com/{idx}",
+                    "excerpt": f"detail text {idx}",
                 }
+                for idx in range(1, 5)
             ],
         }
     )
@@ -106,7 +112,7 @@ def test_callback_edits_message_to_detail_and_back(tmp_path, monkeypatch):
         json={
             "callback_query": {
                 "id": "cb1",
-                "data": "hzn:i:run123:1:0",
+                "data": "hzn:o:run123:1",
                 "message": {
                     "message_id": 55,
                     "chat": {"id": 123},
@@ -118,33 +124,15 @@ def test_callback_edits_message_to_detail_and_back(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert fake.calls[0][0] == "editMessageText"
     assert fake.calls[0][1]["parse_mode"] == "HTML"
-    assert '<a href="https://example.com/1">Item one</a>' in fake.calls[0][1]["text"]
-    assert "detail text" in fake.calls[0][1]["text"]
-    assert fake.calls[0][1]["reply_markup"]["inline_keyboard"][1][0][
-        "callback_data"
-    ] == "hzn:o:run123:0"
-    assert fake.calls[0][1]["reply_markup"]["inline_keyboard"][0][0][
-        "url"
-    ] == "https://example.com/1"
-
-    response = client.post(
-        "/telegram/webhook",
-        headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
-        json={
-            "callback_query": {
-                "id": "cb2",
-                "data": "hzn:o:run123:0",
-                "message": {
-                    "message_id": 55,
-                    "chat": {"id": 123},
-                },
-            }
-        },
-    )
-
-    assert response.status_code == 200
-    assert fake.calls[2][0] == "editMessageText"
-    assert fake.calls[2][1]["text"] == "overview text\n\n第 1/1 页 · 当前 1-1/1"
+    assert '<a href="https://example.com/3">Item 3</a>' in fake.calls[0][1]["text"]
+    assert '<a href="https://example.com/1">Item 1</a>' not in fake.calls[0][1]["text"]
+    assert "detail text 3" in fake.calls[0][1]["text"]
+    assert fake.calls[0][1]["reply_markup"]["inline_keyboard"] == [
+        [
+            {"text": "上一页", "callback_data": "hzn:o:run123:0"},
+            {"text": "第 2/2 页", "callback_data": "hzn:o:run123:1"},
+        ]
+    ]
 
 
 def test_callback_rejects_wrong_secret(tmp_path, monkeypatch):

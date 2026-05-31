@@ -304,7 +304,6 @@ class TelegramBotConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8088
     languages: Optional[List[str]] = Field(default_factory=lambda: ["zh"])
-    max_items: int = 10
     page_size: int = 5
     overview_limit: int = 3600
     item_limit: int = 3800
@@ -319,7 +318,7 @@ class TelegramBotConfig(BaseModel):
             raise ValueError("telegram_bot.webhook_path must start with '/'")
         return v
 
-    @field_validator("max_items", "page_size", "overview_limit", "item_limit")
+    @field_validator("page_size", "overview_limit", "item_limit")
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
         if v <= 0:
