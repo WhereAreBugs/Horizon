@@ -8,10 +8,8 @@ services:
       - ${HORIZON_DATA_VOLUME:-./data}:/app/data
     environment:
       - TZ=UTC
-    ports:
-      - "127.0.0.1:8088:8088"
     restart: unless-stopped
     entrypoint: ["uv", "run"]
-    # Long-running daemon: Telegram callback HTTP service + configurable scheduler.
+    # Long-running daemon: scheduler only in Cloudflare Worker gateway mode.
     # For one-time run, use: docker compose run --rm horizon horizon --hours 24
     command: ["python", "-m", "src.services.daemon"]

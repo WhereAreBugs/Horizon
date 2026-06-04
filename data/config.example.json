@@ -159,6 +159,8 @@
     "enabled": false,
     "bot_token_env": "TELEGRAM_BOT_TOKEN",
     "chat_id_env": "TELEGRAM_CHAT_ID",
+    "worker_url_env": "TELEGRAM_WORKER_URL",
+    "worker_ingest_secret_env": "TELEGRAM_WORKER_INGEST_SECRET",
     "public_base_url_env": "TELEGRAM_PUBLIC_BASE_URL",
     "webhook_path": "/telegram/webhook",
     "secret_token_env": "TELEGRAM_WEBHOOK_SECRET",
@@ -170,7 +172,8 @@
     "item_limit": 3800,
     "disable_web_page_preview": true,
     "proxy_headers": true,
-    "forwarded_allow_ips": "*"
+    "forwarded_allow_ips": "*",
+    "max_items": 100
   },
   "daemon": {
     "enabled": false,

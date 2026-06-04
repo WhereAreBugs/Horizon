@@ -106,6 +106,61 @@ class TelegramBotClient:
         return data
 
 
+class TelegramWorkerGateway:
+    """Publishes Telegram run payloads to a Cloudflare Worker gateway."""
+
+    def __init__(
+        self,
+        base_url: str,
+        ingest_secret: str = "",
+        http_client: httpx.AsyncClient | None = None,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.ingest_secret = ingest_secret
+        self._client = http_client
+
+    async def publish(
+        self,
+        payload: dict[str, Any],
+        *,
+        chat_id: str = "",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"payload": payload}
+        if chat_id:
+            body["chat_id"] = chat_id
+
+        headers = {"Content-Type": "application/json"}
+        if self.ingest_secret:
+            headers["Authorization"] = f"Bearer {self.ingest_secret}"
+            headers["X-Horizon-Ingest-Secret"] = self.ingest_secret
+
+        if self._client is not None:
+            return await self._post(self._client, body, headers)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            return await self._post(client, body, headers)
+
+    async def _post(
+        self,
+        client: httpx.AsyncClient,
+        body: dict[str, Any],
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        if not self.base_url:
+            raise TelegramBotError("Cloudflare Worker URL is empty")
+
+        response = await client.post(
+            f"{self.base_url}/api/runs",
+            json=body,
+            headers=headers,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("ok") is False:
+            raise TelegramBotError(str(data.get("error") or "Worker gateway error"))
+        return data
+
+
 def _env(name: str) -> str:
     return os.environ.get(name, "").strip()
 
@@ -194,6 +249,21 @@ def _item_excerpt(item: ContentItem, language: str) -> str:
     return _plain_markdown(text)
 
 
+def _score_sort_value(item: ContentItem) -> float:
+    return float(item.ai_score) if item.ai_score is not None else -1.0
+
+
+def _build_payload_summary_markdown(
+    *,
+    header: str,
+    intro: str,
+    hint: str,
+    details: list[dict[str, Any]],
+) -> str:
+    body = "\n\n".join(str(item.get("markdown") or "").strip() for item in details)
+    return f"# {header}\n\n> {intro}\n\n{hint}\n\n---\n\n{body}".strip()
+
+
 def build_telegram_run_payload(
     *,
     config: TelegramBotConfig,
@@ -202,9 +272,12 @@ def build_telegram_run_payload(
     date: str,
     lang: str,
     summarizer: DailySummarizer,
+    summary_markdown: str | None = None,
 ) -> dict[str, Any]:
     """Build persisted overview/detail payload for Telegram callbacks."""
-    selected = important_items
+    selected = sorted(important_items, key=_score_sort_value, reverse=True)[
+        : config.max_items
+    ]
     header = (
         f"Horizon 每日速递 - {date}"
         if lang == "zh"
@@ -214,13 +287,28 @@ def build_telegram_run_payload(
         intro = (
             f"从 {all_items_count} 条内容中筛选出 {len(important_items)} 条重要资讯。"
         )
-        hint = "下面按页展示全部重要资讯；点击标题可直接打开来源。"
+        if len(selected) < len(important_items):
+            hint = (
+                f"下面按评分展示前 {len(selected)} 条；"
+                "点击标题可直接打开来源。"
+            )
+        else:
+            hint = "下面按评分展示全部重要资讯；点击标题可直接打开来源。"
     else:
         intro = (
             f"Selected {len(important_items)} important items from "
             f"{all_items_count} fetched items."
         )
-        hint = "All selected items are shown across pages. Tap a title to open the source."
+        if len(selected) < len(important_items):
+            hint = (
+                f"Showing the top {len(selected)} by score across pages. "
+                "Tap a title to open the source."
+            )
+        else:
+            hint = (
+                "All selected items are shown by score across pages. "
+                "Tap a title to open the source."
+            )
 
     lines = [header, "", intro, "", hint]
 
@@ -241,15 +329,30 @@ def build_telegram_run_payload(
                 "score": item.ai_score or "",
                 "url": str(item.url),
                 "text": _truncate(_plain_markdown(detail_text), config.item_limit),
+                "markdown": detail_text,
                 "excerpt": _truncate(_item_excerpt(item, lang), config.item_limit),
             }
         )
+
+    payload_summary_markdown = (
+        summary_markdown
+        if summary_markdown and len(selected) == len(important_items)
+        else _build_payload_summary_markdown(
+            header=header,
+            intro=intro,
+            hint=hint,
+            details=details,
+        )
+    )
 
     return {
         "date": date,
         "language": lang,
         "all_items_count": all_items_count,
         "important_items_count": len(important_items),
+        "delivered_items_count": len(selected),
+        "max_items": config.max_items,
+        "summary_markdown": payload_summary_markdown,
         "page_size": config.page_size,
         "overview_limit": config.overview_limit,
         "overview": overview,
@@ -395,12 +498,19 @@ class TelegramBotNotifier:
         data_dir: str | Path = "data",
         console: Console | None = None,
         client: TelegramBotClient | None = None,
+        worker_gateway: TelegramWorkerGateway | None = None,
     ):
         self.config = config
         self.store = TelegramRunStore(data_dir)
         self.console = console or Console()
         token = _env(config.bot_token_env)
         self.client = client or (TelegramBotClient(token) if token else None)
+        worker_url = _env(config.worker_url_env)
+        self.worker_gateway = worker_gateway or (
+            TelegramWorkerGateway(worker_url, _env(config.worker_ingest_secret_env))
+            if worker_url
+            else None
+        )
 
     async def send_daily_summary(
         self,
@@ -410,6 +520,7 @@ class TelegramBotNotifier:
         date: str,
         lang: str,
         summarizer: DailySummarizer,
+        summary: str | None = None,
     ) -> None:
         if not self.config.enabled:
             return
@@ -421,7 +532,24 @@ class TelegramBotNotifier:
             )
             return
 
+        payload = build_telegram_run_payload(
+            config=self.config,
+            important_items=important_items,
+            all_items_count=all_items_count,
+            date=date,
+            lang=lang,
+            summarizer=summarizer,
+            summary_markdown=summary,
+        )
+
         chat_id = _env(self.config.chat_id_env)
+        if self.worker_gateway is not None:
+            self.console.print(
+                f"☁️ Sending {lang.upper()} Telegram overview via Cloudflare Worker..."
+            )
+            await self.worker_gateway.publish(payload, chat_id=chat_id)
+            return
+
         if not chat_id:
             self.console.print(
                 f"[yellow]Telegram bot enabled but env var "
@@ -435,14 +563,6 @@ class TelegramBotNotifier:
             )
             return
 
-        payload = build_telegram_run_payload(
-            config=self.config,
-            important_items=important_items,
-            all_items_count=all_items_count,
-            date=date,
-            lang=lang,
-            summarizer=summarizer,
-        )
         run_id = self.store.save(payload)
         keyboard = build_overview_keyboard(
             run_id,

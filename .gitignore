@@ -58,6 +58,9 @@ logs/*.log
 # uv
 .uv/
 
+# Node / Cloudflare Workers
+node_modules/
+
 # todo
 todo.txt
 .ruff_cache

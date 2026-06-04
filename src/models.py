@@ -298,6 +298,8 @@ class TelegramBotConfig(BaseModel):
     enabled: bool = False
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
     chat_id_env: str = "TELEGRAM_CHAT_ID"
+    worker_url_env: str = "TELEGRAM_WORKER_URL"
+    worker_ingest_secret_env: str = "TELEGRAM_WORKER_INGEST_SECRET"
     public_base_url_env: str = "TELEGRAM_PUBLIC_BASE_URL"
     webhook_path: str = "/telegram/webhook"
     secret_token_env: str = "TELEGRAM_WEBHOOK_SECRET"
@@ -310,6 +312,7 @@ class TelegramBotConfig(BaseModel):
     disable_web_page_preview: bool = True
     proxy_headers: bool = True
     forwarded_allow_ips: str = "*"
+    max_items: int = 100
 
     @field_validator("webhook_path")
     @classmethod
@@ -318,7 +321,7 @@ class TelegramBotConfig(BaseModel):
             raise ValueError("telegram_bot.webhook_path must start with '/'")
         return v
 
-    @field_validator("page_size", "overview_limit", "item_limit")
+    @field_validator("page_size", "overview_limit", "item_limit", "max_items")
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
         if v <= 0:

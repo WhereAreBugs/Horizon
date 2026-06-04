@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import signal
 from contextlib import asynccontextmanager
 from datetime import datetime, time as dt_time, timedelta
-from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -181,6 +182,38 @@ def create_daemon_app(config: Config, storage: StorageManager):
     )
 
 
+def _env(name: str) -> str:
+    return os.environ.get(name, "").strip()
+
+
+def _should_run_http_server(telegram_config: TelegramBotConfig) -> bool:
+    """Only local Telegram webhook mode needs an HTTP listener."""
+    return telegram_config.enabled and not _env(telegram_config.worker_url_env)
+
+
+async def run_scheduler_only(config: Config, storage: StorageManager) -> None:
+    """Run the daemon scheduler without opening an HTTP listener."""
+    scheduler = HorizonDaemonScheduler(
+        storage=storage,
+        daemon_config=config.daemon or DaemonConfig(),
+    )
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+
+    console.print("[cyan]Running Horizon daemon scheduler without HTTP listener.[/cyan]")
+    scheduler.start()
+    try:
+        await stop_event.wait()
+    finally:
+        await scheduler.stop()
+
+
 def main() -> None:
     """CLI entry point for container-friendly long-running service."""
     parser = argparse.ArgumentParser(description="Run Horizon as a long-running daemon")
@@ -194,6 +227,10 @@ def main() -> None:
     load_dotenv()
     storage, config = _load_config(data_dir=args.data_dir)
     telegram_config = config.telegram_bot or TelegramBotConfig()
+
+    if not _should_run_http_server(telegram_config):
+        asyncio.run(run_scheduler_only(config, storage))
+        return
 
     import uvicorn
 

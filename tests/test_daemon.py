@@ -4,7 +4,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from src.models import DaemonConfig, TelegramBotConfig
-from src.services.daemon import HorizonDaemonScheduler, create_daemon_app
+from src.services.daemon import (
+    HorizonDaemonScheduler,
+    _should_run_http_server,
+    create_daemon_app,
+)
 from src.storage.manager import StorageManager
 
 
@@ -25,6 +29,24 @@ def test_interval_delay_seconds(tmp_path):
     )
 
     assert scheduler._next_delay_seconds() == 5400
+
+
+def test_daemon_skips_http_server_when_telegram_disabled(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_WORKER_URL", raising=False)
+
+    assert not _should_run_http_server(TelegramBotConfig(enabled=False))
+
+
+def test_daemon_skips_http_server_in_worker_gateway_mode(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_WORKER_URL", "https://worker.example")
+
+    assert not _should_run_http_server(TelegramBotConfig(enabled=True))
+
+
+def test_daemon_runs_http_server_for_local_telegram_webhook(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_WORKER_URL", raising=False)
+
+    assert _should_run_http_server(TelegramBotConfig(enabled=True))
 
 
 def test_daemon_app_healthz_without_scheduler(tmp_path):

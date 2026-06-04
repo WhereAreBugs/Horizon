@@ -572,6 +572,8 @@ the chat readable without sending one message per item.
     "enabled": true,
     "bot_token_env": "TELEGRAM_BOT_TOKEN",
     "chat_id_env": "TELEGRAM_CHAT_ID",
+    "worker_url_env": "TELEGRAM_WORKER_URL",
+    "worker_ingest_secret_env": "TELEGRAM_WORKER_INGEST_SECRET",
     "public_base_url_env": "TELEGRAM_PUBLIC_BASE_URL",
     "webhook_path": "/telegram/webhook",
     "secret_token_env": "TELEGRAM_WEBHOOK_SECRET",
@@ -583,13 +585,16 @@ the chat readable without sending one message per item.
     "item_limit": 3800,
     "disable_web_page_preview": true,
     "proxy_headers": true,
-    "forwarded_allow_ips": "*"
+    "forwarded_allow_ips": "*",
+    "max_items": 100
   }
 }
 ```
 
-All important items selected by the run are included. `page_size` controls how
-many items are shown per Telegram page.
+Important items are uploaded by AI score descending, capped by `max_items`
+(default `100`). `page_size` controls how many items are shown per Telegram
+page. When the Cloudflare Worker gateway is used, the Worker stores and renders
+the payload it receives; it does not apply another item cap.
 
 Required environment variables:
 
@@ -621,11 +626,84 @@ to `http://127.0.0.1:8088/telegram/webhook`.
 The service validates Telegram's `X-Telegram-Bot-Api-Secret-Token` header when
 `TELEGRAM_WEBHOOK_SECRET` is set. Keep this enabled behind reverse proxies.
 
+### Cloudflare Worker Gateway
+
+If the Horizon container cannot receive public traffic, run the Telegram bot
+callback service on Cloudflare instead of exposing the container. In this mode:
+
+- Horizon runs normally in the container and sends the Telegram run payload to
+  Cloudflare with an outbound `POST /api/runs`.
+- Cloudflare stores the run payload in KV, sends the Telegram message, and
+  handles `/telegram/webhook` callback queries for page navigation.
+- Telegram buttons only contain page navigation plus an `AI 总结` link to
+  `/summary/<run_id>`. Item titles remain source links in the message body.
+- The summary page renders Horizon's Markdown summary from the run payload, so
+  generated headings, links, references, and other Markdown structure remain
+  readable in the browser.
+
+Container-side environment variables:
+
+```bash
+TELEGRAM_WORKER_URL=https://horizon-telegram-bot-server.<account>.workers.dev
+TELEGRAM_WORKER_INGEST_SECRET=choose-a-random-ingest-secret
+```
+
+`TELEGRAM_CHAT_ID` is optional on the container when the Worker has
+`TELEGRAM_CHAT_ID` configured. The container does not need
+`TELEGRAM_BOT_TOKEN` in Worker gateway mode.
+
+Cloudflare-side secrets and variables:
+
+```bash
+cd workers/telegram-bot-server
+
+npm install
+npx wrangler kv namespace create HORIZON_TG_RUNS
+npx wrangler kv namespace create HORIZON_TG_RUNS --preview
+
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_CHAT_ID
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+npx wrangler secret put HORIZON_INGEST_SECRET
+npx wrangler secret put PUBLIC_BASE_URL
+```
+
+Copy the returned KV namespace IDs into `wrangler.toml`, then deploy:
+
+```bash
+npm run deploy
+```
+
+Register Telegram to call Cloudflare, not the Horizon container:
+
+```bash
+curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://horizon-telegram-bot-server.<account>.workers.dev/telegram/webhook",
+    "allowed_updates": ["callback_query"],
+    "secret_token": "choose-a-random-telegram-webhook-secret"
+  }'
+```
+
+To deploy the same code as Cloudflare Pages Functions, create a Pages project
+from `workers/telegram-bot-server`, bind the KV namespace as
+`HORIZON_TG_RUNS`, set the same secrets/variables in the Pages project, and run:
+
+```bash
+cd workers/telegram-bot-server
+npm run deploy:pages
+```
+
+Use the Pages domain as `TELEGRAM_WORKER_URL` and register
+`https://<pages-domain>/telegram/webhook` with Telegram. The summary button will
+open `https://<pages-domain>/summary/<run_id>`.
+
 ## Long-Running Container Daemon
 
 For container deployments, use `horizon-daemon` instead of the one-shot
-`horizon` command. The daemon keeps one process alive, hosts the Telegram
-callback service, and runs Horizon on a configurable schedule.
+`horizon` command. The daemon keeps one process alive and runs Horizon on a
+configurable schedule.
 
 ```json
 {
@@ -642,8 +720,7 @@ callback service, and runs Horizon on a configurable schedule.
 }
 ```
 
-- `enabled`: Turns scheduled Horizon runs on or off. The HTTP callback service
-  still stays online even when the scheduler is disabled.
+- `enabled`: Turns scheduled Horizon runs on or off.
 - `run_on_startup`: When `true`, run Horizon once after the container starts.
   This is useful for deployment testing and restart recovery.
 - `startup_delay_sec`: Optional delay before the startup run.
@@ -662,15 +739,18 @@ Start the daemon locally:
 uv run horizon-daemon
 ```
 
-With Docker Compose, the included service defaults to the daemon and publishes
-the callback service on localhost only:
+With Docker Compose, the included service defaults to the daemon without any
+published ports. When `TELEGRAM_WORKER_URL` is set, the daemon runs in pure
+scheduler mode and does not open an HTTP listener.
+
+Only local Telegram webhook mode needs an HTTP listener. If you do not use the
+Cloudflare Worker gateway, publish the callback service on localhost and put
+your reverse proxy in front of that local port:
 
 ```yaml
 ports:
   - "127.0.0.1:8088:8088"
 ```
-
-Put your reverse proxy in front of that local port. For example:
 
 ```nginx
 location /telegram/webhook {

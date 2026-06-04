@@ -206,6 +206,7 @@ class HorizonOrchestrator:
                         date=today,
                         lang=lang,
                         summarizer=summarizer,
+                        summary=summary,
                     )
 
             self.console.print("[bold green]✅ Horizon completed successfully![/bold green]")
