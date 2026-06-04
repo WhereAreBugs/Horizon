@@ -1,0 +1,23 @@
+{
+  "name": "horizon-telegram-bot-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:pages": "wrangler pages deploy public --project-name horizon-telegram-bot-server",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "@types/sanitize-html": "^2.16.1",
+    "typescript": "^5.0.0",
+    "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "marked": "^18.0.4",
+    "sanitize-html": "^2.17.4"
+  }
+}

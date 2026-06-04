@@ -1,0 +1,13 @@
+name = "horizon-telegram-bot-server"
+main = "src/index.ts"
+compatibility_date = "2026-06-04"
+
+[[kv_namespaces]]
+binding = "HORIZON_TG_RUNS"
+id = "replace-with-kv-namespace-id"
+preview_id = "replace-with-preview-kv-namespace-id"
+
+[vars]
+PAGE_TITLE = "Horizon AI Summary"
+RUN_TTL_SECONDS = "2592000"
+DISABLE_WEB_PAGE_PREVIEW = "true"

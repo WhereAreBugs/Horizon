@@ -657,33 +657,31 @@ Cloudflare-side secrets and variables:
 ```bash
 cd workers/telegram-bot-server
 
-npm install
-npx wrangler kv namespace create HORIZON_TG_RUNS
-npx wrangler kv namespace create HORIZON_TG_RUNS --preview
-
-npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put TELEGRAM_CHAT_ID
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
-npx wrangler secret put HORIZON_INGEST_SECRET
-npx wrangler secret put PUBLIC_BASE_URL
+cp .deploy.env.example .deploy.env
 ```
 
-Copy the returned KV namespace IDs into `wrangler.toml`, then deploy:
+Fill `.deploy.env`:
 
 ```bash
-npm run deploy
+CLOUDFLARE_API_TOKEN=...
+CLOUDFLARE_ACCOUNT_ID=...
+HORIZON_WORKER_DOMAIN=horizon.example.com
+TELEGRAM_BOT_TOKEN=123456:bot-token
+TELEGRAM_CHAT_ID=-1001234567890
 ```
 
-Register Telegram to call Cloudflare, not the Horizon container:
+Deploy from the repository root:
 
 ```bash
-curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://horizon-telegram-bot-server.<account>.workers.dev/telegram/webhook",
-    "allowed_updates": ["callback_query"],
-    "secret_token": "choose-a-random-telegram-webhook-secret"
-  }'
+python3 scripts/deploy_cloudflare_worker.py
+```
+
+The helper writes `wrangler.toml`, lets Wrangler provision KV, sets Worker
+secrets, deploys the Worker, and registers Telegram to call Cloudflare, not the
+Horizon container. For a dry run:
+
+```bash
+python3 scripts/deploy_cloudflare_worker.py --dry-run
 ```
 
 To deploy the same code as Cloudflare Pages Functions, create a Pages project

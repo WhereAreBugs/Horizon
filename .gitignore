@@ -60,6 +60,7 @@ logs/*.log
 
 # Node / Cloudflare Workers
 node_modules/
+workers/telegram-bot-server/.deploy.env
 
 # todo
 todo.txt
